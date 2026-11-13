@@ -1,0 +1,7 @@
+NanoFlags
+Copyright 2026 Alibtekarat Althkiya Company for Trading & Marketing (Intinovate)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+On Linux (and other non-Apple platforms) it uses swift-crypto (https://github.com/apple/swift-crypto),
+Copyright Apple Inc. and the SwiftCrypto project authors, licensed under the Apache License, Version 2.0.

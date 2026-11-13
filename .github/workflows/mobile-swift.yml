@@ -1,0 +1,118 @@
+# NanoFlags Swift SDK (iOS / macOS / tvOS / watchOS + Linux core) for the public repository motazalmaroai/nanoflags-swift.
+# Installed there as .github/workflows/mobile-swift.yml by scripts/export-swift-repos.sh (monorepo source:
+# packages/sdk-swift/ci/nanoflags-swift.yml). The parity fixtures are vendored into Tests/Fixtures/.
+#
+# No secrets. The live checks against production use the PUBLIC demo browser key (a client key, already in the public
+# site's source) and toggle the shared demo flag through the public, rate-limited demo endpoint (restored afterwards):
+# the Linux and macOS jobs run one after the other, and runs never overlap (concurrency group).
+name: Swift SDK
+
+on:
+  push:
+    branches: [main]
+    paths: ["Sources/**", "Tests/**", "Package.swift", ".github/workflows/mobile-swift.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Shared by every workflow that toggles the public demo flag (React Native, Flutter, Android, Swift):
+  # one at a time, never cancelled mid-run. (Concurrency groups are per repository; runs in nanoflags-sdk are not
+  # serialized against this one.)
+  group: nanoflags-demo-device-tests
+  cancel-in-progress: false
+
+env:
+  NANOFLAGS_DEMO_SDK_KEY: nf_pub_4ced72c484c4f388a900aeeaf81e130c110c11730d555dd8
+  NANOFLAGS_PRODUCTION_TESTS: "1"
+  NANOFLAGS_SDK_KEY: nf_pub_4ced72c484c4f388a900aeeaf81e130c110c11730d555dd8
+
+jobs:
+  linux:
+    name: Linux (swift test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SWIFT_VERSION: "6.2.4"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Swift ${{ env.SWIFT_VERSION }} (swift.org tarball)
+        run: |
+          set -euo pipefail
+          url="https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2404/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE-ubuntu24.04.tar.gz"
+          mkdir -p "$RUNNER_TEMP/swift"
+          curl -fsSL "$url" | tar xz -C "$RUNNER_TEMP/swift" --strip-components=1
+          echo "$RUNNER_TEMP/swift/usr/bin" >> "$GITHUB_PATH"
+      - run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test (parity suite, verification, fake edge; production over SSE/polling)
+        run: swift test
+
+  macos:
+    name: macOS (swift test) + iOS simulator (xcodebuild test)
+    # After Linux (its production check also toggles the demo flag), whatever its result.
+    needs: linux
+    if: ${{ !cancelled() }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Select the newest Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_*.app | sed -E 's/.*Xcode_([0-9.]+)\.app/\1 &/' | grep -v beta | sort -V | tail -1 | cut -d' ' -f2)
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: swift test on macOS (CryptoKit, AppKit lifecycle notifications, SwiftUI helpers, URLSessionWebSocketTask live check)
+        run: swift test
+
+      - name: Pick an iOS simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          devices=$(xcrun simctl list devices available -j)
+          # iPhone 15 if present, otherwise the newest iPhone of the newest iOS runtime.
+          udid=$(echo "$devices" | jq -r '[.devices | to_entries[] | select(.key | test("SimRuntime.iOS-")) | .value[] | select(.name == "iPhone 15")] | first | .udid // empty')
+          if [ -z "$udid" ]; then
+            udid=$(echo "$devices" | jq -r '
+              [.devices | to_entries[] | select(.key | test("SimRuntime.iOS-"))
+               | {v: (.key | capture("iOS-(?<v>[0-9-]+)").v | split("-") | map(tonumber)), d: .value}]
+              | sort_by(.v) | last | .d | map(select(.name | startswith("iPhone"))) | last | .udid')
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "$udid"
+
+      - name: Find the package scheme
+        id: scheme
+        run: |
+          set -euo pipefail
+          scheme=$(xcodebuild -list -json | jq -r '.workspace.schemes // .project.schemes | map(select(endswith("-Package"))) | first // "NanoFlags"')
+          echo "scheme=$scheme" >> "$GITHUB_OUTPUT"
+          echo "scheme: $scheme"
+
+      - name: xcodebuild test on the iOS simulator (UIKit lifecycle, SwiftUI, CryptoKit, live WebSocket)
+        env:
+          # xcodebuild passes TEST_RUNNER_<NAME> to the test process as <NAME>.
+          TEST_RUNNER_NANOFLAGS_PRODUCTION_TESTS: ${{ env.NANOFLAGS_PRODUCTION_TESTS }}
+          TEST_RUNNER_NANOFLAGS_SDK_KEY: ${{ env.NANOFLAGS_SDK_KEY }}
+          TEST_RUNNER_NANOFLAGS_PARITY_JSON: ${{ github.workspace }}/Tests/Fixtures/parity.json
+          TEST_RUNNER_NANOFLAGS_EXTRA_JSON: ${{ github.workspace }}/Tests/Fixtures/extra.json
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -scheme "${{ steps.scheme.outputs.scheme }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO | tee xcodebuild-ios.log
+          grep -E "Executed [0-9]+ tests" xcodebuild-ios.log | tail -1
+
+      - name: Build for tvOS and watchOS (library only)
+        run: |
+          set -euo pipefail
+          for dest in "generic/platform=tvOS Simulator" "generic/platform=watchOS Simulator"; do
+            xcodebuild build -scheme NanoFlags -destination "$dest" CODE_SIGNING_ALLOWED=NO -quiet
+          done

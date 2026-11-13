@@ -1,0 +1,11 @@
+{
+ "description": "A real GET /v1/bundle answer of https://edge.nanoflags.io for the public demo browser key (captured 2026-11-12), used as an offline signature interop vector.",
+ "headers": {
+  "etag": "\"598cce5c57f0602162824578e9486c65-client\"",
+  "x-nanoflags-environment-id": "0640fffb-3609-4116-b03a-b20e3b1cb5af",
+  "x-nanoflags-key-id": "k1",
+  "x-nanoflags-signature": "h6ubEQG9PC1dM-R-dXZrseCQwhUX6mge8iAshq3xk93BkHOZwaiwDeBCZX1urtrOQoETrenfJO3WfGtC_gUCDQ",
+  "x-nanoflags-signed": "true"
+ },
+ "body": "{\"revision\":55,\"checksum\":\"598cce5c57f0602162824578e9486c65\",\"bundle\":{\"flags\":{\"demo-accent\":{\"off\":\"blue\",\"type\":\"string\",\"rules\":[],\"default\":\"blue\",\"enabled\":true,\"clientExposed\":true},\"demo-new-checkout\":{\"off\":false,\"type\":\"boolean\",\"rules\":[],\"default\":false,\"enabled\":true,\"clientExposed\":true}},\"schema\":1,\"project\":\"public-demo\",\"revision\":55,\"segments\":{},\"environment\":\"demo\",\"engine\":1}}"
+}
