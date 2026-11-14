@@ -12,6 +12,12 @@ on:
     branches: [main]
     paths: ["Sources/**", "Tests/**", "Package.swift", ".github/workflows/mobile-swift.yml"]
   workflow_dispatch:
+  # Called by release.yml on the commit being released (core_ref is accepted for symmetry and not used here).
+  workflow_call:
+    inputs:
+      core_ref:
+        type: string
+        default: main
 
 permissions:
   contents: read

@@ -1,0 +1,87 @@
+# Release workflow for the public Swift repositories (motazalmaroai/nanoflags-swift and
+# motazalmaroai/nanoflags-openfeature-swift). Installed there as .github/workflows/release.yml by
+# scripts/export-swift-repos.sh (monorepo source: packages/sdk-swift/ci/release.yml).
+#
+# A release is cut by the CHANGELOG: when the newest "## X.Y.Z — YYYY-MM-DD" heading on main has a date (not
+# "unreleased") and the tag X.Y.Z does not exist yet, this workflow runs the full test workflow (mobile-swift.yml) on
+# that exact commit and, only if it passes, creates the bare-semver tag X.Y.Z with a GitHub release whose notes are
+# that CHANGELOG section. Tags are never moved or deleted. The OpenFeature provider is released only once the core
+# version it depends on (Package.swift `from:`) is tagged, and it is tested against that tag.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: ["CHANGELOG.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+      core_ref: ${{ steps.plan.outputs.core_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          heading="$(grep -m1 -E '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)"
+          version="$(sed -E 's/^## ([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?).*/\1/' <<<"$heading")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "core_ref=main" >> "$GITHUB_OUTPUT"
+          if [ -z "$heading" ] || grep -qi unreleased <<<"$heading"; then
+            echo "Newest CHANGELOG entry is unreleased ($heading): nothing to release."; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "Tag $version already exists: nothing to release."; echo "release=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -f Sources/NanoFlags/Version.swift ]; then
+            grep -q "nanoFlagsSDKVersion = \"$version\"" Sources/NanoFlags/Version.swift \
+              || { echo "::error::Sources/NanoFlags/Version.swift does not say $version"; exit 1; }
+          fi
+          core="$(grep -oE 'nanoflags-swift\.git", from: "[^"]+"' Package.swift | sed -E 's/.*from: "([^"]+)"/\1/' || true)"
+          if [ -n "$core" ]; then
+            git ls-remote --exit-code --tags https://github.com/motazalmaroai/nanoflags-swift.git "refs/tags/$core" >/dev/null \
+              || { echo "::error::nanoflags-swift $core is not tagged yet; release the core first."; exit 1; }
+            echo "core_ref=$core" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Releasing $version"; echo "release=true" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    uses: ./.github/workflows/mobile-swift.yml
+    with:
+      core_ref: ${{ needs.plan.outputs.core_ref }}
+
+  release:
+    needs: [plan, test]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag and publish the GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v v="$VERSION" '$0 ~ "^## "v"([^0-9.]|$)" {on=1; next} /^## / {if (on) exit} on' CHANGELOG.md > notes.md
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-11-14
 
 First release of the NanoFlags SDK for Apple platforms (iOS 14+, macOS 12+, tvOS 14+, watchOS 7+; core on Linux).
 
