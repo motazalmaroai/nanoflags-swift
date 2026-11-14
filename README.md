@@ -20,8 +20,7 @@ Swift Package Manager (Xcode: *File → Add Package Dependencies…*):
 .product(name: "NanoFlags", package: "nanoflags-swift")
 ```
 
-Releases are tagged with bare semver (`0.1.0`). Until the first tag exists, depend on the branch instead:
-`.package(url: "https://github.com/motazalmaroai/nanoflags-swift.git", branch: "main")`.
+Releases are tagged with bare semver (`0.1.0`); see the [releases](https://github.com/motazalmaroai/nanoflags-swift/releases).
 
 ## Quickstart
 
