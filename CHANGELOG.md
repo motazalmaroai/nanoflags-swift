@@ -2,6 +2,11 @@
 
 ## 0.2.0 — 2026-11-21
 
+- A shadow bundle is checked against the environment of the verified live configuration even when it arrives before
+  that configuration's first verification finishes (it waits for it, and is skipped if none verifies). Before, a
+  shadow bundle fetched in that window was not bound to the environment, so one signed for another environment of
+  the same project could be used for shadow counters (Linux showed it reliably). Shadow bundles are never applied as
+  configuration, so served values were never affected.
 - New condition operators: `semver_eq`, `semver_neq`, `semver_gt`, `semver_gte`, `semver_lt`, `semver_lte` compare
   semantic versions (SemVer 2.0 precedence: `4.10.0` > `4.9.0`, `1.0.0-alpha` < `1.0.0-alpha.1` < `1.0.0-beta` <
   `1.0.0-rc.1` < `1.0.0`, build metadata ignored; leniently, a leading `v` is allowed, missing minor / patch are 0 so
