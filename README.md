@@ -8,14 +8,14 @@ revisions are pushed over a live WebSocket in well under a second.
 - Swift 5.9+ (Xcode 15+); `async`/`await`, `Sendable` types, AsyncSequence and closure listeners
 - SwiftUI: `@FeatureFlag` property wrapper, `ObservableObject` and `@Observable` models
 - OpenFeature provider (separate package, iOS 15+)
-- Version 0.1.0 · Apache-2.0
+- Version 0.2.0 · Apache-2.0
 
 ## Install
 
 Swift Package Manager (Xcode: *File → Add Package Dependencies…*):
 
 ```swift
-.package(url: "https://github.com/motazalmaroai/nanoflags-swift.git", from: "0.1.0")
+.package(url: "https://github.com/motazalmaroai/nanoflags-swift.git", from: "0.2.0")
 // target dependency:
 .product(name: "NanoFlags", package: "nanoflags-swift")
 ```
@@ -101,8 +101,9 @@ Views re-render when the configuration, the context (`identify`) or the status c
 | **Lifecycle** | In the background the live connection is closed and polling stops (`UIApplication` / `WKExtension` / `NSApplication` notifications); on return to the foreground the SDK reconnects and catches up. `pause()` / `resume()` do the same manually. |
 | **Low Data Mode** | When `NWPath.isConstrained`, no socket or stream is kept, telemetry is paused and the configuration is polled every 15 min (`lowDataPollInterval`). |
 | **Telemetry** | A service report ("this app runs revision N") every 60 s and 10 % sampled evaluations every 10 s, carrying the **names and JSON types** of the attributes a flag's rules use — never their values. `events: .disabled` turns it off; `redact:` customises it. |
+| **Shadow evaluation** | While a change waits for approval in an environment with shadow evaluation on, a fresh `/v1/bundle` answer carries `X-NanoFlags-Shadow`; the SDK loads the signed draft from `GET /v1/shadow` (Ed25519 over `nanoflags-shadow-v1`, marker checked; otherwise ignored with error code `shadow`), evaluates it for a sample (`shadow.sampleRate`, default 10 %) of the evaluations of the flags it changes and sends **counters only** (samples, flips, value pairs live → draft, draft rule hits; labelled with `service` and `serviceVersion`) with telemetry, at most once a minute and on `flush()`, `pause()` and `close()`. No context, attribute or identifier is sent; your default is sent as `<fallback>`. Your code always gets the live value: a bundle with a `shadow` member is never applied. Client keys receive the client view of the draft. `shadow: .disabled` (or `events: .disabled`) turns it off. |
 
-Every request sends `User-Agent: nanoflags-swift/0.1.0 (<OS> <version>)` (the edge refuses default library agents);
+Every request sends `User-Agent: nanoflags-swift/0.2.0 (<OS> <version>)` (the edge refuses default library agents);
 `userAgentSuffix` appends your app's.
 
 ### Options
@@ -119,6 +120,8 @@ NanoFlagsOptions(
     storage: .applicationSupport,        // .userDefaults(suiteName:), .directory(url), .custom(...), .none
     bootstrap: nil,                      // bundle JSON shipped with the app
     events: EventsOptions(),             // .disabled
+    serviceVersion: nil,                 // default: CFBundleShortVersionString (labels shadow reports)
+    shadow: ShadowOptions(),             // ShadowOptions(sampleRate: 0.1), .disabled
     requestTimeout: 10, callbackQueue: nil, userAgentSuffix: nil)
 ```
 

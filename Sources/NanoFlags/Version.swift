@@ -4,4 +4,4 @@
 #endif
 
 /// The SDK version, sent as `sdk: "swift/<version>"` with telemetry and in the User-Agent.
-public let nanoFlagsSDKVersion = "0.1.0"
+public let nanoFlagsSDKVersion = "0.2.0"

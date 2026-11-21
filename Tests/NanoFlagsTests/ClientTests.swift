@@ -45,7 +45,7 @@ final class ClientTests: XCTestCase {
 
         // Headers: custom User-Agent (the edge answers 403 to library defaults), the key as a bearer token.
         let req = try XCTUnwrap(edge.requests.first { $0.url?.path == "/v1/bundle" })
-        XCTAssertTrue(req.value(forHTTPHeaderField: "User-Agent")!.hasPrefix("nanoflags-swift/0.1.0 ("))
+        XCTAssertTrue(req.value(forHTTPHeaderField: "User-Agent")!.hasPrefix("nanoflags-swift/0.2.0 ("))
         XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer \(TestKeys.client)")
 
         // A revalidation sends the ETag and gets a 304.
@@ -314,7 +314,7 @@ final class ClientTests: XCTestCase {
         _ = c.stringVariation(key: "accent", default: "")
         await c.flush()
         let body = try XCTUnwrap(edge.eventBodies.last)
-        XCTAssertEqual(body["sdk"], "swift/0.1.0")
+        XCTAssertEqual(body["sdk"], "swift/0.2.0")
         XCTAssertEqual(body["service"], "swift-tests")
         XCTAssertEqual(body["revision"], 1)
         let events = try XCTUnwrap(body["events"]?.arrayValue)

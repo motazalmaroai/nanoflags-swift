@@ -112,6 +112,28 @@ public struct EventsOptions: Sendable {
     public static let disabled = EventsOptions(enabled: false)
 }
 
+/// Shadow evaluation of drafts. When an admin turned it on for the environment and a change waits for approval,
+/// the edge offers the change's draft as a signed shadow bundle. For a sample of the evaluations of the flags the
+/// draft changes, the client evaluates the draft as well and reports counters only (no context, attribute or
+/// identifier) with its telemetry, at most once a minute. The app always gets the live value: a shadow bundle is
+/// never applied, and one whose signature does not verify is ignored. Needs telemetry (`events`); off with it.
+public struct ShadowOptions: Sendable {
+    /// Default true. `false` never fetches nor evaluates shadow bundles.
+    public var enabled: Bool
+    /// Fraction of evaluations of changed flags that are also evaluated with the draft, 0–1. Default 0.1.
+    public var sampleRate: Double
+    /// Random source for sampling (tests).
+    var random: @Sendable () -> Double = { Double.random(in: 0..<1) }
+
+    public init(enabled: Bool = true, sampleRate: Double = 0.1) {
+        self.enabled = enabled
+        self.sampleRate = sampleRate
+    }
+
+    /// No shadow evaluation.
+    public static let disabled = ShadowOptions(enabled: false)
+}
+
 public struct NanoFlagsOptions: Sendable {
     /// The edge. Default: the hosted edge `https://edge.nanoflags.io`.
     public var baseURL: URL
@@ -138,6 +160,11 @@ public struct NanoFlagsOptions: Sendable {
     /// signature-checked: it comes from your build.
     public var bootstrap: Data?
     public var events: EventsOptions
+    /// Your app's version, at most 40 characters. It labels shadow evaluation reports, so the change page shows
+    /// the impact per service and version. Default (nil): the app's `CFBundleShortVersionString`.
+    public var serviceVersion: String?
+    /// Shadow evaluation of drafts (see `ShadowOptions`). Default on (it also needs `events`).
+    public var shadow: ShadowOptions
     /// Timeout of each HTTP request. Default 10 s.
     public var requestTimeout: TimeInterval
     /// Queue for `onChange` / `onStatusChange` / `onError` callbacks. Default nil: called on the SDK's own
@@ -160,6 +187,8 @@ public struct NanoFlagsOptions: Sendable {
         storage: StorageOption = .applicationSupport,
         bootstrap: Data? = nil,
         events: EventsOptions = EventsOptions(),
+        serviceVersion: String? = nil,
+        shadow: ShadowOptions = ShadowOptions(),
         requestTimeout: TimeInterval = 10,
         callbackQueue: DispatchQueue? = nil,
         userAgentSuffix: String? = nil
@@ -177,6 +206,8 @@ public struct NanoFlagsOptions: Sendable {
         self.storage = storage
         self.bootstrap = bootstrap
         self.events = events
+        self.serviceVersion = serviceVersion
+        self.shadow = shadow
         self.requestTimeout = requestTimeout
         self.callbackQueue = callbackQueue
         self.userAgentSuffix = userAgentSuffix
@@ -208,6 +239,8 @@ public struct NanoFlagsError: Error, Sendable, CustomStringConvertible {
     public enum Code: String, Sendable {
         case network, unauthorized, http, invalidBundle = "invalid_bundle", storage, config, signature, engine
         case environmentDeleted = "environment_deleted"
+        /// A shadow bundle (the draft of a change waiting for approval) was ignored. Nothing changes for the app.
+        case shadow
     }
 
     public let code: Code

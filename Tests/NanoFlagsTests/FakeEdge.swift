@@ -12,7 +12,8 @@ import XCTest
 
 /// An in-process edge that signs like the real one: `/v1/bundle` (ETag, signature headers), `/v1/keys`,
 /// `/v1/events`, `/v1/stream` (SSE) and `/v1/live` (WebSocket: `hello` on connect, `rev` on publish,
-/// text ping/pong, close codes).
+/// text ping/pong, close codes). Shadow evaluation (migration 0179): `shadowHeader` is announced on `/v1/bundle`
+/// and `shadowAnswer` answers `/v1/shadow` (404 when nil).
 final class FakeEdge: NetworkTransport, @unchecked Sendable {
     let lock = NSLock()
     var signingKey = Curve25519.Signing.PrivateKey()
@@ -29,6 +30,10 @@ final class FakeEdge: NetworkTransport, @unchecked Sendable {
     var refuseWebSocket = false
     var extraKeys: [(String, Curve25519.Signing.PublicKey)] = []
     var keysServed: [SigningKey]?
+    /// `X-NanoFlags-Shadow` on `/v1/bundle` answers (200 and 304).
+    var shadowHeader: String?
+    /// The `/v1/shadow` answer; 404 when nil.
+    var shadowAnswer: HTTPResponse?
 
     var requests: [URLRequest] = []
     var eventBodies: [JSONValue] = []
@@ -105,6 +110,7 @@ final class FakeEdge: NetworkTransport, @unchecked Sendable {
                 let etag = "\"\(checksum)-client\""
                 var headers = ["etag": etag, "x-nanoflags-environment-id": environmentId, "x-nanoflags-signed": signed ? "true" : "false"]
                 if stale { headers["x-nanoflags-stale"] = "true" }
+                if let shadowHeader { headers["x-nanoflags-shadow"] = shadowHeader }
                 if signed {
                     headers["x-nanoflags-signature"] = signature(for: bundleText)
                     headers["x-nanoflags-key-id"] = kid
@@ -114,10 +120,40 @@ final class FakeEdge: NetworkTransport, @unchecked Sendable {
                 let body = "{\"revision\":\(revision),\"checksum\":\"\(checksum)\",\"bundle\":\(bundleText)}"
                 return HTTPResponse(status: 200, headers: headers, body: Data(body.utf8))
             }
+        case "/v1/shadow":
+            return locked {
+                guard request.value(forHTTPHeaderField: "Authorization") == "Bearer \(TestKeys.client)" else {
+                    return HTTPResponse(status: 401, headers: [:], body: Data())
+                }
+                return shadowAnswer ?? HTTPResponse(status: 404, headers: [:], body: Data("{\"error\":{\"code\":\"shadow_not_found\",\"message\":\"x\"}}".utf8))
+            }
         default:
             return HTTPResponse(status: 404, headers: [:], body: Data())
         }
     }
+
+    /// A `/v1/shadow` answer the way the edge serves it: the draft `bundle` text plus the `shadow` marker inside the
+    /// signed bytes, signed over the shadow canonical string (or, `bundleDomain`, over a bundle canonical string).
+    func shadowResponse(bundle: String, sessionId: String, checksum: String, markerSession: String? = nil, markerChecksum: String? = nil,
+                        markerEnv: String? = nil, env: String? = nil, key: Curve25519.Signing.PrivateKey? = nil, bundleDomain: Bool = false,
+                        tamper: ((String) -> String)? = nil) -> HTTPResponse {
+        locked {
+            let env = env ?? environmentId
+            let marker = "{\"sessionId\":\"\(markerSession ?? sessionId)\",\"checksum\":\"\(markerChecksum ?? checksum)\",\"environmentId\":\"\(markerEnv ?? environmentId)\",\"baseRevision\":\(revision)}"
+            let text = String(bundle.dropLast()) + ",\"shadow\":\(marker)}"
+            let digest = sha256Hex(Data(text.utf8))
+            let canonical = bundleDomain ? "nanoflags-bundle-v1\n\(env)\n\(revision)\n\(checksum)\n\(digest)" : "nanoflags-shadow-v1\n\(env)\n\(sessionId)\n\(checksum)\n\(digest)"
+            let sig = try! (key ?? signingKey).signature(for: Data(canonical.utf8))
+            let served = tamper?(text) ?? text
+            let body = "{\"sessionId\":\"\(sessionId)\",\"checksum\":\"\(checksum)\",\"baseRevision\":\(revision),\"bundle\":\(served)}"
+            return HTTPResponse(status: 200, headers: ["content-type": "application/json", "x-nanoflags-signed": "true", "x-nanoflags-signature": b64url(sig),
+                                                       "x-nanoflags-key-id": kid, "x-nanoflags-environment-id": env, "x-nanoflags-shadow": "\(sessionId).\(checksum)"],
+                                body: Data(body.utf8))
+        }
+    }
+
+    var shadowRequests: Int { locked { requests.filter { $0.url?.path == "/v1/shadow" }.count } }
+    var lastShadowReport: JSONValue? { locked { eventBodies.last?["shadow"] } }
 
     func stream(_ request: URLRequest) -> AsyncThrowingStream<StreamPart, Error> {
         AsyncThrowingStream { c in
