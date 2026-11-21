@@ -8,6 +8,8 @@ func isBundle(_ v: JSValue) -> Bool {
     guard case .number(let schema) = o["schema"] ?? .undefined, schema == 1 else { return false }
     guard case .number = o["revision"] ?? .undefined else { return false }
     guard case .object = o["flags"] ?? .undefined else { return false }
+    // A shadow bundle (the draft of a change waiting for approval, migration 0179) is never configuration.
+    guard case .none = o["shadow"] else { return false }
     switch o["segments"] ?? .undefined {
     case .object, .array: return true
     default: return false
@@ -166,6 +168,8 @@ extension NanoFlagsClient {
             let res = try await net.send(req)
             if isClosed { return }
             let servedStale = res.header("x-nanoflags-stale") == "true"
+            // Migration 0179: a change is being shadow-evaluated (fresh answers only; a stale answer says nothing about it).
+            if (res.status == 304 || (200..<300).contains(res.status)) && !servedStale { noteShadow(res.header("x-nanoflags-shadow")) }
             if res.status == 304 {
                 let has = locked { failures = 0; return snapshot != nil }
                 if has { setStatus(servedStale ? .stale : .ready) }

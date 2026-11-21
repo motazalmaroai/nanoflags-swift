@@ -251,6 +251,10 @@ extension Engine {
             case "lt": return a < b
             default: return a <= b
             }
+        case "semver_eq", "semver_neq", "semver_gt", "semver_gte", "semver_lt", "semver_lte":
+            return matchSemver(o, actual, value)
+        case "before", "after":
+            return matchDate(o, actual, value)
         default:
             return false
         }
@@ -275,6 +279,8 @@ extension Engine {
     static let opWords: [String: String] = [
         "eq": "=", "neq": "≠", "in": "in", "not_in": "not in", "contains": "contains", "starts_with": "starts with", "ends_with": "ends with",
         "gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "exists": "exists", "not_exists": "does not exist", "segment": "in segment", "not_segment": "not in segment",
+        "semver_eq": "version =", "semver_neq": "version ≠", "semver_gt": "version >", "semver_gte": "version ≥", "semver_lt": "version <", "semver_lte": "version ≤",
+        "before": "before", "after": "after",
     ]
 
     static func describeCondition(_ c: JSValue) throws -> String {

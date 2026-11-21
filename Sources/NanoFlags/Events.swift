@@ -64,15 +64,24 @@ extension NanoFlagsClient {
         }
     }
 
-    /// Sends queued telemetry now (the service report plus up to one batch of events).
+    /// Sends queued telemetry now (the service report plus up to one batch of events, and pending shadow
+    /// evaluation counters).
     public func flush() async {
+        await flush(shadowNow: true)
+    }
+
+    /// One events request. Shadow evaluation counters ride along at most once a minute, or now with `shadowNow`
+    /// (`flush()`, `pause()`, `close()`); `shadowReport`: a report already taken (its session just ended).
+    func flush(shadowNow: Bool, shadowReport: JSValue? = nil) async {
         guard eventsEnabled else { return }
-        let (batch, revision, low): ([JSValue], Int, Bool) = locked {
+        let (batch, revision, low, shadow): ([JSValue], Int, Bool, JSValue?) = locked {
             let n = min(events.queue.count, EventQueue.maxBatch)
             let b = Array(events.queue.prefix(n))
             events.queue.removeFirst(n)
             events.lastReport = Date()
-            return (b, snapshot?.revision ?? 0, lowData)
+            // Low Data Mode keeps the (bounded) shadow counters for later.
+            let shadow = shadowReport ?? (lowData ? nil : lockedTakeShadowReport(force: shadowNow))
+            return (b, snapshot?.revision ?? 0, lowData, shadow)
         }
         if low { return } // Low Data Mode: nothing leaves the device
         let trimmed: [JSValue] = batch.map { e in
@@ -86,6 +95,7 @@ extension NanoFlagsClient {
         body.set("sdk", .string("swift/\(nanoFlagsSDKVersion)"))
         body.set("revision", .number(Double(revision)))
         body.set("events", .array(trimmed))
+        if let shadow { body.set("shadow", shadow) }
         var req = request("/v1/events", method: "POST")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = Data((JSValue.object(body.build()).json ?? "{}").utf8)
@@ -105,9 +115,9 @@ extension NanoFlagsClient {
                     if self.paused || self.lowData { return true }
                     // Nothing queued: the service report alone goes out once per report interval.
                     let sinceReport = self.events.lastReport.map { Date().timeIntervalSince($0) } ?? .infinity
-                    return self.events.queue.isEmpty && sinceReport < self.options.events.reportInterval
+                    return self.events.queue.isEmpty && sinceReport < self.options.events.reportInterval && !self.lockedShadowDue
                 }
-                if !idle { await self.flush() }
+                if !idle { await self.flush(shadowNow: false) }
             }
         }
     }

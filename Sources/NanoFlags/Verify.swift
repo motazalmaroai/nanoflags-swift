@@ -126,6 +126,23 @@ func canonicalString(environmentId: String, revision: Int, checksum: String, bun
     Data("nanoflags-bundle-v1\n\(environmentId)\n\(revision)\n\(checksum)\n\(CryptoShim.sha256Hex(bundleText))".utf8)
 }
 
+/// The signed text of a shadow bundle (migration 0179), domain-separated from bundle signatures:
+/// "nanoflags-shadow-v1\n<environment>\n<session id>\n<draft checksum>\n<sha256 hex of the bundle text>".
+func shadowCanonicalString(environmentId: String, sessionId: String, checksum: String, bundleText: Data) -> Data {
+    Data("nanoflags-shadow-v1\n\(environmentId)\n\(sessionId)\n\(checksum)\n\(CryptoShim.sha256Hex(bundleText))".utf8)
+}
+
+/// Whether `signature` is a valid shadow-bundle signature by one of `keys` over `bundleText`.
+func verifyShadowText(keys: [ImportedKey], signature: String, kid: String?, environmentId: String, sessionId: String, checksum: String, bundleText: Data) -> Bool {
+    guard let sig = base64URLDecode(signature), sig.count == 64 else { return false }
+    let msg = shadowCanonicalString(environmentId: environmentId, sessionId: sessionId, checksum: checksum, bundleText: bundleText)
+    for k in keys {
+        if let want = kid, let have = k.kid, want != have { continue }
+        if CryptoShim.verifyEd25519(publicKey: k.raw, signature: sig, message: msg) { return true }
+    }
+    return false
+}
+
 /// Whether `info.signature` is a valid signature by one of `keys` over the canonical string for
 /// `bundleText`. A key id narrows the candidates; an unknown key id matches no key.
 func verifyBundleText(keys: [ImportedKey], info: SignatureInfo, bundleText: Data) -> Bool {

@@ -14,6 +14,8 @@ public final class NanoFlagsClient: @unchecked Sendable {
     let options: NanoFlagsOptions
     let baseURL: String
     let service: String
+    /// Labels shadow evaluation reports (`serviceVersion`, default: the app's `CFBundleShortVersionString`).
+    let serviceVersion: String?
     let userAgent: String
     /// Non-secret fingerprint binding a persisted bundle to this key + edge.
     let storageID: String
@@ -66,6 +68,12 @@ public final class NanoFlagsClient: @unchecked Sendable {
     var errorListeners: [UUID: @Sendable (NanoFlagsError) -> Void] = [:]
     var events = EventQueue()
     var platformObservers: [Any] = []
+    // Shadow evaluation of drafts (Shadow.swift).
+    var shadowState: ShadowState?
+    var shadowCounters: ShadowCounters?
+    var shadowFlushedAt = Date()
+    var shadowFetch: (id: String, at: Date, running: Bool)?
+    var shadowKeyRing: KeyRing?
 
     static let liveConnectTimeout: TimeInterval = 10
     static let livePing: TimeInterval = 30
@@ -87,6 +95,9 @@ public final class NanoFlagsClient: @unchecked Sendable {
         while base.hasSuffix("/") { base.removeLast() }
         baseURL = base
         service = options.service ?? Bundle.main.bundleIdentifier ?? "unknown"
+        let version = (options.serviceVersion ?? (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        serviceVersion = version.flatMap { $0.isEmpty ? nil : String(decoding: Array($0.utf16.prefix(40)), as: UTF16.self) }
         userAgent = "nanoflags-swift/\(nanoFlagsSDKVersion) (\(platformDescription()))" + (options.userAgentSuffix.map { " " + $0 } ?? "")
         let id = String(Engine.murmur3("\(base)|\(key)"), radix: 16)
         storageID = String(repeating: "0", count: max(0, 8 - id.count)) + id
@@ -289,6 +300,9 @@ public final class NanoFlagsClient: @unchecked Sendable {
             }
         }
         record(r, ctx, snap)
+        if let snap, shadowEnabled, locked({ shadowState != nil }) {
+            shadowEvaluate(key, fallback: fallbackJS, context: ctxValue, accepts: { JSONValue(engine: $0).flatMap(T.fromFlag) != nil }, live: r, liveSnapshot: snap)
+        }
         let rev = r.revision.jsNumber
         return EvaluationDetail(flagKey: key, value: value, reason: r.reason, ruleIndex: r.ruleIndex,
                                 ruleId: r.ruleIndex == nil || r.ruleId.isUndefined ? nil : r.ruleId.jsString,
@@ -426,7 +440,7 @@ public final class NanoFlagsClient: @unchecked Sendable {
         lock.unlock()
         stopRealtime()
         locked { pollTask?.cancel(); pollTask = nil }
-        Task { await self.flush() }
+        Task { await self.flush() } // the app may be suspended next: queued telemetry and shadow counters go out now
     }
 
     /// Reconnects and catches up after `pause()`. Called automatically when the app returns to the
