@@ -31,6 +31,8 @@ enum ShadowWire {
     static let maxFlagKey = 63
     /// Shadow counters go out with the events report at most this often (and on `flush()`, `pause()` and `close()`).
     static let flushInterval: TimeInterval = 60
+    /// How long a shadow bundle waits for the live configuration's verification to pin the environment.
+    static let pinWait: TimeInterval = 10
     /// A failed shadow fetch is not retried for the same announcement before this.
     static let retryInterval: TimeInterval = 60
     /// Reported instead of a value that did not come from a bundle: the application's own default.
@@ -390,6 +392,16 @@ extension NanoFlagsClient {
         return try await ring.keys(for: kid)
     }
 
+    /// The environment the live configuration was verified for, waiting up to `timeout` for the first verification.
+    func awaitPinnedEnvironment(timeout: TimeInterval = ShadowWire.pinWait) async -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            if let p = locked({ pinnedEnvironment }) { return p }
+            if isClosed || Date() >= deadline { return nil }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
     /// Loads and verifies a shadow bundle. Only a bundle signed for this session, with a matching marker inside, is used.
     func fetchShadow(sessionId: String, checksum: String) async {
         func reject(_ why: String) {
@@ -407,7 +419,18 @@ extension NanoFlagsClient {
         guard let raw = rawMember(res.body, "bundle"), let signature = res.header("x-nanoflags-signature"),
               let environmentId = res.header("x-nanoflags-environment-id"), !signature.isEmpty, !environmentId.isEmpty
         else { return reject("it is not signed.") }
-        if let pinned = locked({ pinnedEnvironment }), pinned != environmentId { return reject("it was signed for a different environment.") }
+        // The shadow bundle must be signed for the environment of the verified live configuration. The announcement
+        // arrives with a /v1/bundle answer whose own verification (which pins the environment) may still be running:
+        // wait for it instead of skipping the check. Without verification nothing is ever pinned.
+        let pinned: String?
+        if keyRing != nil {
+            guard let p = await awaitPinnedEnvironment() else { return } // not verified yet: the next announcement retries
+            pinned = p
+        } else {
+            pinned = locked({ pinnedEnvironment })
+        }
+        if isClosed { return }
+        if let pinned, pinned != environmentId { return reject("it was signed for a different environment.") }
         let kid = res.header("x-nanoflags-key-id")
         let keys = (try? await shadowKeys(for: kid)) ?? []
         if isClosed { return }

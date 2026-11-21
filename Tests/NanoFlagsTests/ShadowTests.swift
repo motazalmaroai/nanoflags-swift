@@ -152,6 +152,30 @@ final class ShadowTests: XCTestCase {
         }
     }
 
+    /// Regression (Linux): the shadow fetch can finish before the live bundle's verification pins the environment.
+    /// It must wait for the pin and then refuse a bundle signed for another environment, never skip the check.
+    func testAShadowBundleWaitsForTheLiveEnvironmentBeforeItIsChecked() async throws {
+        let edge = makeEdge()
+        let c = client(edge)
+        defer { c.close() }
+        let errors = Collector<NanoFlagsError>()
+        c.onError { errors.add($0) }
+        _ = await c.ready(timeout: 5)
+        let liveEnv = c.locked { c.pinnedEnvironment }
+        XCTAssertEqual(liveEnv, edge.environmentId)
+        let otherEnv = "6f0c7c1e-0000-4000-8000-000000000999"
+        announce(edge, edge.shadowResponse(bundle: draft(edge), sessionId: session, checksum: draftSum, markerEnv: otherEnv, env: otherEnv))
+        c.locked { c.pinnedEnvironment = nil } // as if the first live verification were still running
+        let fetch = Task { await c.fetchShadow(sessionId: session, checksum: draftSum) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertFalse(active(c)) // waiting, not accepted
+        XCTAssertTrue(errors.items.isEmpty)
+        c.locked { c.pinnedEnvironment = liveEnv }
+        await fetch.value
+        XCTAssertFalse(active(c))
+        XCTAssertEqual(errors.items.map(\.code), [.shadow])
+    }
+
     func testAShadowBundleIsNeverAppliedAsConfiguration() async throws {
         let edge = makeEdge()
         let c = client(edge)
